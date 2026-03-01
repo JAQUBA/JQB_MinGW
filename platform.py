@@ -4,11 +4,16 @@ JQB MinGW Platform — PlatformIO platform class.
 Auto-downloads MinGW-w64 GCC toolchain for native Windows C/C++ builds.
 No manual setup required — toolchain is installed automatically on first build.
 
-Packages are downloaded to ~/.platformio/packages/toolchain-mingw64/
+On first 'pio run', this platform:
+  1. Queries GitHub API for latest winlibs GCC release
+  2. Downloads the x86_64 POSIX/SEH/UCRT .zip (~250 MB)
+  3. Extracts to ~/.platformio/packages/toolchain-mingw64/
+  4. Subsequent builds use the cached toolchain (no re-download)
 """
 
 import json
 import os
+import re
 import shutil
 import sys
 import zipfile
@@ -20,20 +25,29 @@ from platformio.public import PlatformBase
 # MinGW-w64 package configuration
 #
 # Source: winlibs.com (brechtsanders/winlibs_mingw on GitHub)
-# Variant: GCC 14.2.0, x86_64, POSIX threads, SEH exceptions, UCRT runtime
+# Variant: x86_64, POSIX threads, SEH exceptions, UCRT runtime
+#
+# The platform auto-detects the latest release via GitHub API.
+# Fallback URL is used if the API is unreachable.
 # ---------------------------------------------------------------------------
 
-_MINGW_PACKAGE = {
-    "name": "toolchain-mingw64",
-    "version": "14.2.0",
-    "description": "MinGW-w64 GCC 14.2.0 (x86_64, UCRT, POSIX threads, SEH)",
-    "strip_root": "mingw64",
-    "url": (
-        "https://github.com/brechtsanders/winlibs_mingw/releases/download/"
-        "14.2.0posix-19.1.7-12.0.0-ucrt-r3/"
-        "winlibs-x86_64-posix-seh-gcc-14.2.0-mingw-w64ucrt-12.0.0-r3.zip"
-    ),
-}
+_GITHUB_REPO = "brechtsanders/winlibs_mingw"
+_GITHUB_API_URL = "https://api.github.com/repos/%s/releases/latest" % _GITHUB_REPO
+
+# Pattern to match x86_64 POSIX SEH UCRT .zip asset
+_ASSET_PATTERN = re.compile(
+    r"winlibs-x86_64-posix-seh-gcc-[\d.]+-mingw-w64ucrt-[\d.]+-r\d+\.zip$"
+)
+
+_FALLBACK_URL = (
+    "https://github.com/brechtsanders/winlibs_mingw/releases/download/"
+    "15.2.0posix-13.0.0-ucrt-r6/"
+    "winlibs-x86_64-posix-seh-gcc-15.2.0-mingw-w64ucrt-13.0.0-r6.zip"
+)
+_FALLBACK_VERSION = "15.2.0"
+
+_PACKAGE_NAME = "toolchain-mingw64"
+_STRIP_ROOT = "mingw64"
 
 
 def _get_packages_dir():
@@ -43,6 +57,39 @@ def _get_packages_dir():
         join(os.path.expanduser("~"), ".platformio"),
     )
     return join(pio_home, "packages")
+
+
+def _fetch_latest_release():
+    """Query GitHub API for latest winlibs release.
+    Returns (download_url, version_string) or None on failure.
+    """
+    try:
+        from urllib.request import urlopen, Request
+
+        req = Request(_GITHUB_API_URL)
+        req.add_header("Accept", "application/vnd.github.v3+json")
+        req.add_header("User-Agent", "JQB_MinGW-PlatformIO")
+
+        with urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+
+        tag = data.get("tag_name", "")
+        assets = data.get("assets", [])
+
+        # Find the x86_64 posix seh ucrt .zip
+        for asset in assets:
+            name = asset.get("name", "")
+            if _ASSET_PATTERN.match(name):
+                url = asset.get("browser_download_url", "")
+                # Extract GCC version from filename
+                m = re.search(r"gcc-([\d.]+)", name)
+                version = m.group(1) if m else tag
+                return url, version
+
+    except Exception as e:
+        print("[MinGW] GitHub API unavailable (%s), using fallback URL" % e)
+
+    return None
 
 
 def _download(url, dest_path):
@@ -66,8 +113,7 @@ def _download(url, dest_path):
 
 def _install_mingw(packages_dir):
     """Download, extract and install MinGW-w64 toolchain."""
-    pkg = _MINGW_PACKAGE
-    pkg_dir = join(packages_dir, pkg["name"])
+    pkg_dir = join(packages_dir, _PACKAGE_NAME)
 
     # Already installed — skip
     if isdir(pkg_dir) and isfile(join(pkg_dir, "package.json")):
@@ -79,8 +125,18 @@ def _install_mingw(packages_dir):
             "Current platform: %s" % sys.platform
         )
 
-    print("[MinGW] Installing %s v%s ..." % (pkg["name"], pkg["version"]))
-    print("[MinGW] This is a one-time download (~450 MB). Please wait...")
+    # Try to get latest release from GitHub API
+    result = _fetch_latest_release()
+    if result:
+        download_url, version = result
+        print("[MinGW] Latest release: GCC %s" % version)
+    else:
+        download_url = _FALLBACK_URL
+        version = _FALLBACK_VERSION
+        print("[MinGW] Using fallback: GCC %s" % version)
+
+    print("[MinGW] Installing toolchain-mingw64 v%s ..." % version)
+    print("[MinGW] This is a one-time download (~250 MB). Please wait...")
 
     tmp_dir = join(packages_dir, "_mingw_tmp")
     try:
@@ -90,7 +146,7 @@ def _install_mingw(packages_dir):
 
         # Download
         archive_path = join(tmp_dir, "mingw.zip")
-        _download(pkg["url"], archive_path)
+        _download(download_url, archive_path)
 
         # Extract
         print("  Extracting (this may take a minute)...")
@@ -105,11 +161,8 @@ def _install_mingw(packages_dir):
         except OSError:
             pass
 
-        # Determine source directory (with optional root stripping)
-        if pkg["strip_root"]:
-            source_dir = join(extract_dir, pkg["strip_root"])
-        else:
-            source_dir = extract_dir
+        # Determine source directory (strip root)
+        source_dir = join(extract_dir, _STRIP_ROOT)
 
         if not isdir(source_dir):
             raise RuntimeError(
@@ -133,18 +186,18 @@ def _install_mingw(packages_dir):
         with open(join(pkg_dir, "package.json"), "w") as f:
             json.dump(
                 {
-                    "name": pkg["name"],
-                    "version": pkg["version"],
-                    "description": pkg["description"],
+                    "name": _PACKAGE_NAME,
+                    "version": version,
+                    "description": "MinGW-w64 GCC %s (x86_64, UCRT, POSIX threads, SEH)" % version,
                 },
                 f,
                 indent=2,
             )
 
-        print("[MinGW] %s installed successfully" % pkg["name"])
+        print("[MinGW] toolchain-mingw64 v%s installed successfully" % version)
 
     except Exception as e:
-        print("[MinGW] ERROR installing %s: %s" % (pkg["name"], e))
+        print("[MinGW] ERROR: %s" % e)
         raise
     finally:
         if isdir(tmp_dir):
@@ -154,7 +207,7 @@ def _install_mingw(packages_dir):
                 pass
 
 
-class JqbMingwPlatform(PlatformBase):
+class Jqb_mingwPlatform(PlatformBase):
 
     def configure_default_packages(self, variables, targets):
         # Auto-install MinGW-w64 if not present
