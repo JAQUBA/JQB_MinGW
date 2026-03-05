@@ -30,5 +30,12 @@
             "type": "toolchain",
             "optional": true
         }
+    },
+    "debug": {
+        "tools": {
+            "mingw-gdb": {
+                "default": true
+            }
+        }
     }
 }

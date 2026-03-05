@@ -102,6 +102,24 @@ env.Replace(
 )
 
 # ---------------------------------------------------------------------------
+# Build profiles: debug vs release
+#
+# 'build_type = debug' (default for 'pio debug') adds debug symbols and
+# disables heavy optimizations. Release builds get -O2 and -DNDEBUG.
+# ---------------------------------------------------------------------------
+
+if env.GetBuildType() == "debug":
+    env.Append(
+        CCFLAGS=["-Og", "-g3", "-ggdb3"],
+        LINKFLAGS=["-Og", "-g3", "-ggdb3"],
+    )
+else:
+    env.Append(
+        CCFLAGS=["-O2"],
+        CPPDEFINES=["NDEBUG"],
+    )
+
+# ---------------------------------------------------------------------------
 # Auto-add src/ subdirectories to include path
 #
 # Scans all subdirectories of src/ for .h files and adds them to CPPPATH.
@@ -229,6 +247,83 @@ def _generate_ide_config(env):
 
 
 _generate_ide_config(env)
+
+
+# ---------------------------------------------------------------------------
+# Auto-generate VS Code debug configuration (launch.json)
+#
+# Creates/updates a "Debug (MinGW-w64 GDB)" config using GDB from the
+# auto-installed toolchain. Merges with existing launch configurations.
+# ---------------------------------------------------------------------------
+
+
+def _generate_debug_config(env):
+    project_dir = env.subst("$PROJECT_DIR")
+    vscode_dir = join(project_dir, ".vscode")
+
+    gdb_path = join(MINGW_BIN, "gdb.exe").replace("\\", "/")
+    build_dir = env.subst("$BUILD_DIR").replace("\\", "/")
+    prog_name = env.subst("$PROGNAME") + ".exe"
+    prog_path = join(build_dir, prog_name).replace("\\", "/")
+
+    new_config = {
+        "name": "Debug (MinGW-w64 GDB)",
+        "type": "cppdbg",
+        "request": "launch",
+        "program": prog_path,
+        "args": [],
+        "cwd": "${workspaceFolder}",
+        "environment": [],
+        "MIMode": "gdb",
+        "miDebuggerPath": gdb_path,
+        "setupCommands": [
+            {
+                "description": "Enable pretty-printing",
+                "text": "-enable-pretty-printing",
+                "ignoreFailures": True,
+            }
+        ],
+        "preLaunchTask": "PlatformIO: Build",
+    }
+
+    config_path = join(vscode_dir, "launch.json")
+
+    try:
+        with open(config_path, "r") as f:
+            config = _json.load(f)
+    except (IOError, OSError, ValueError):
+        config = {"version": "0.2.0", "configurations": []}
+
+    configs = config.get("configurations", [])
+    found = False
+    for i, c in enumerate(configs):
+        if c.get("name") == "Debug (MinGW-w64 GDB)":
+            configs[i] = new_config
+            found = True
+            break
+    if not found:
+        configs.append(new_config)
+
+    config["configurations"] = configs
+    config.setdefault("version", "0.2.0")
+
+    config_json = _json.dumps(config, indent=4)
+
+    try:
+        with open(config_path, "r") as f:
+            if f.read() == config_json:
+                return
+    except (IOError, OSError):
+        pass
+
+    if not isdir(vscode_dir):
+        os.makedirs(vscode_dir)
+    with open(config_path, "w") as f:
+        f.write(config_json)
+    print("Generated debug config: %s" % config_path)
+
+
+_generate_debug_config(env)
 
 # ---------------------------------------------------------------------------
 # Build program

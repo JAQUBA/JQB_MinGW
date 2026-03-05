@@ -225,3 +225,36 @@ class Jqb_mingwPlatform(PlatformBase):
             }
 
         return super().configure_default_packages(variables, targets)
+
+    def configure_debug_options(self, initial_debug_options, ide_data):
+        import copy
+
+        debug_options = copy.deepcopy(initial_debug_options)
+
+        packages_dir = _get_packages_dir()
+        mingw_dir = join(packages_dir, _PACKAGE_NAME)
+        gdb_path = join(mingw_dir, "bin", "gdb.exe").replace("\\", "/")
+
+        debug_options["gdb_path"] = gdb_path
+
+        # No debug server for native apps — GDB launches the program directly
+        if "server" not in debug_options:
+            debug_options["server"] = {}
+
+        if "init_cmds" not in debug_options:
+            debug_options["init_cmds"] = [
+                "define pio_reset_halt_target",
+                "end",
+                "define pio_reset_run_target",
+                "end",
+                "set confirm off",
+                "set breakpoint pending on",
+            ]
+
+        if "init_break" not in debug_options:
+            debug_options["init_break"] = "tbreak main"
+
+        if "load_cmds" not in debug_options:
+            debug_options["load_cmds"] = ["run"]
+
+        return debug_options
