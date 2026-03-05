@@ -262,9 +262,16 @@ def _generate_debug_config(env):
     vscode_dir = join(project_dir, ".vscode")
 
     gdb_path = join(MINGW_BIN, "gdb.exe").replace("\\", "/")
+
+    # Debug build goes to a separate directory — resolve correct exe path.
+    # PlatformIO stores debug builds under .pio/build/<env>/debug/ or the
+    # env directory itself when build_type=debug. We construct the path the
+    # same way PIO does: $PROJECT_BUILD_DIR/<env_name>/program.exe and let
+    # the preLaunchTask ("PlatformIO: Debug") ensure it's built with debug
+    # symbols.
     build_dir = env.subst("$BUILD_DIR").replace("\\", "/")
     prog_name = env.subst("$PROGNAME") + ".exe"
-    prog_path = join(build_dir, prog_name).replace("\\", "/")
+    prog_path = (build_dir + "/" + prog_name)
 
     new_config = {
         "name": "Debug (MinGW-w64 GDB)",
@@ -290,7 +297,6 @@ def _generate_debug_config(env):
                 "ignoreFailures": True,
             },
         ],
-        "preLaunchTask": "PlatformIO: Build",
     }
 
     config_path = join(vscode_dir, "launch.json")
