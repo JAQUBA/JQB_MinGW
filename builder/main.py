@@ -272,8 +272,10 @@ def _generate_debug_config(env):
         "request": "launch",
         "program": prog_path,
         "args": [],
+        "stopAtEntry": True,
         "cwd": "${workspaceFolder}",
         "environment": [],
+        "externalConsole": False,
         "MIMode": "gdb",
         "miDebuggerPath": gdb_path,
         "setupCommands": [
@@ -281,7 +283,12 @@ def _generate_debug_config(env):
                 "description": "Enable pretty-printing",
                 "text": "-enable-pretty-printing",
                 "ignoreFailures": True,
-            }
+            },
+            {
+                "description": "Set pending breakpoints",
+                "text": "set breakpoint pending on",
+                "ignoreFailures": True,
+            },
         ],
         "preLaunchTask": "PlatformIO: Build",
     }

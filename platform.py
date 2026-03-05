@@ -242,6 +242,8 @@ class Jqb_mingwPlatform(PlatformBase):
             debug_options["server"] = {}
 
         if "init_cmds" not in debug_options:
+            # Build program path for GDB 'file' command
+            prog_path = ide_data.get("prog_path", "").replace("\\", "/")
             debug_options["init_cmds"] = [
                 "define pio_reset_halt_target",
                 "end",
@@ -249,12 +251,20 @@ class Jqb_mingwPlatform(PlatformBase):
                 "end",
                 "set confirm off",
                 "set breakpoint pending on",
+                "set print pretty on",
             ]
+            # Load executable symbols so breakpoints resolve before 'run'
+            if prog_path:
+                debug_options["init_cmds"].append(
+                    'file "%s"' % prog_path
+                )
 
         if "init_break" not in debug_options:
             debug_options["init_break"] = "tbreak main"
 
         if "load_cmds" not in debug_options:
+            # No firmware to flash — just start the program;
+            # breakpoints (including init_break) are set before this.
             debug_options["load_cmds"] = ["run"]
 
         return debug_options

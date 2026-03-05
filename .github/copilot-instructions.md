@@ -5,9 +5,9 @@ PlatformIO custom platform that provides auto-installed MinGW-w64 GCC toolchain 
 
 ## Architecture
 
-- `platform.json` — PlatformIO platform manifest (metadata, packages, debug tools).
-- `platform.py` — Platform class (`Jqb_mingwPlatform`). Handles toolchain auto-download from GitHub on first build, and configures debug options (GDB).
-- `builder/main.py` — SCons build script. Configures GCC/G++ environment, auto-generates VS Code IDE configs (`c_cpp_properties.json`, `launch.json`), handles build/upload/debug targets.
+- `platform.json` — PlatformIO platform manifest (metadata, packages, debug tools). Declares `mingw-gdb` as the default debug tool.
+- `platform.py` — Platform class (`Jqb_mingwPlatform`). Handles toolchain auto-download from GitHub on first build, and configures debug options (GDB path, init commands, breakpoint support).
+- `builder/main.py` — SCons build script. Configures GCC/G++ environment, sets debug/release build flags, auto-generates VS Code IDE configs (`c_cpp_properties.json`, `launch.json`), handles build/upload/debug targets.
 
 ## Key Conventions
 
@@ -26,7 +26,23 @@ PlatformIO custom platform that provides auto-installed MinGW-w64 GCC toolchain 
 ## Debug
 
 - GDB comes from the auto-installed MinGW-w64 toolchain (`toolchain-mingw64/bin/gdb.exe`).
-- Debug build uses `-Og -g3 -ggdb3` flags.
-- Release build uses `-O2 -DNDEBUG`.
-- `launch.json` is auto-generated with a `"Debug (MinGW-w64 GDB)"` configuration.
+- Debug build uses `-Og -g3 -ggdb3` flags; release uses `-O2 -DNDEBUG`.
 - PlatformIO debug tool is registered as `mingw-gdb` in `platform.json`.
+- `platform.py` `configure_debug_options` sets up the GDB session:
+  - Loads executable symbols via `file` command so breakpoints resolve before `run`.
+  - `set breakpoint pending on` allows breakpoints on not-yet-loaded symbols.
+  - `tbreak main` as initial breakpoint — program stops at `main()` entry.
+  - `load_cmds = ["run"]` starts the program after PlatformIO sets all user breakpoints.
+- `launch.json` is auto-generated with a `"Debug (MinGW-w64 GDB)"` configuration:
+  - `stopAtEntry: true` — debugger pauses at `main()`.
+  - `set breakpoint pending on` in `setupCommands` — IDE breakpoints work even for deferred symbols.
+  - `externalConsole: false` — output goes to VS Code integrated terminal.
+  - `preLaunchTask: "PlatformIO: Build"` — auto-builds before debugging.
+- Both `launch.json` and `c_cpp_properties.json` generators merge with existing configs (never overwrite).
+
+## Toolchain Auto-Install
+
+- On first `pio run`, queries GitHub API (`brechtsanders/winlibs_mingw`) for the latest x86_64 POSIX/SEH/UCRT release.
+- Falls back to a hardcoded URL if the API is unreachable.
+- Extracts to `~/.platformio/packages/toolchain-mingw64/` with a `package.json` marker.
+- Subsequent builds skip download — checks for existing `package.json`.
