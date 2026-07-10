@@ -24,7 +24,7 @@
         "type": "git",
         "url": "https://github.com/JAQUBA/JQB_MinGW.git"
     },
-    "version": "1.0.0",
+    "version": "1.0.2",
     "packages": {
         "toolchain-mingw64": {
             "type": "toolchain",

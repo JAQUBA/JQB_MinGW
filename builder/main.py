@@ -21,10 +21,58 @@ from SCons.Script import (
     AlwaysBuild,
     Default,
     DefaultEnvironment,
+    GetOption,
+    SetOption,
 )
 
 env = DefaultEnvironment()
 platform = env.PioPlatform()
+
+
+def _get_project_option_bool(name, default=False):
+    """Read a project option as boolean with tolerant parsing."""
+    try:
+        raw = env.GetProjectOption(name, str(default))
+    except Exception:
+        return default
+
+    if isinstance(raw, bool):
+        return raw
+
+    value = str(raw).strip().lower()
+    return value in ("1", "true", "yes", "on", "y")
+
+
+def _configure_parallel_jobs():
+    """Use all logical CPU cores unless user explicitly sets --jobs."""
+    try:
+        current_jobs = int(GetOption("num_jobs") or 0)
+    except Exception:
+        current_jobs = 0
+
+    if current_jobs > 1:
+        return
+
+    jobs = os.cpu_count() or 1
+
+    jobs = max(1, jobs)
+    SetOption("num_jobs", jobs)
+    print("[JQB] Parallel jobs: %d" % jobs)
+
+
+def _configure_build_cache():
+    """Enable SCons object cache for significantly faster rebuilds."""
+    cache_dir = join(env.subst("$PROJECT_DIR"), ".pio", ".scons_cache")
+
+    if not isdir(cache_dir):
+        os.makedirs(cache_dir)
+
+    env.CacheDir(cache_dir)
+    print("[JQB] SCons cache: %s" % cache_dir)
+
+
+_configure_parallel_jobs()
+_configure_build_cache()
 
 # ---------------------------------------------------------------------------
 # Resolve MinGW-w64 toolchain
@@ -105,17 +153,20 @@ env.Replace(
 # Build profiles: debug vs release
 #
 # 'build_type = debug' (default for 'pio debug') adds debug symbols and
-# disables heavy optimizations. Release builds get -O2 and -DNDEBUG.
+# disables heavy optimizations. Release builds use -O1 and -DNDEBUG for
+# faster iteration.
 # ---------------------------------------------------------------------------
 
 if env.GetBuildType() == "debug":
     env.Append(
-        CCFLAGS=["-Og", "-g3", "-ggdb3"],
-        LINKFLAGS=["-Og", "-g3", "-ggdb3"],
+        # Keep debug ergonomics while reducing compile-time overhead.
+        CCFLAGS=["-Og", "-g1", "-pipe"],
+        LINKFLAGS=["-Og", "-g1"],
     )
 else:
     env.Append(
-        CCFLAGS=["-O2"],
+        # Prioritize compilation speed for desktop iteration cycles.
+        CCFLAGS=["-O1", "-pipe"],
         CPPDEFINES=["NDEBUG"],
     )
 
@@ -246,7 +297,8 @@ def _generate_ide_config(env):
     print("Generated IntelliSense config: %s" % config_path)
 
 
-_generate_ide_config(env)
+if _get_project_option_bool("jqb_generate_vscode_files", False):
+    _generate_ide_config(env)
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +388,8 @@ def _generate_debug_config(env):
     print("Generated debug config: %s" % config_path)
 
 
-_generate_debug_config(env)
+if _get_project_option_bool("jqb_generate_vscode_files", False):
+    _generate_debug_config(env)
 
 # ---------------------------------------------------------------------------
 # Build program
